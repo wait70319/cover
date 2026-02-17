@@ -101,24 +101,31 @@
 
             ffmpeg = new FFmpeg();
 
-            // 監聽日誌
             ffmpeg.on('log', ({ message }) => {
                 console.log(message);
-                // 這裡可以做更細緻的進度條，暫時只顯示處理中
             });
 
-            const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
+            // 核心檔案位置
+            const coreBaseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
+            // 庫檔案位置 (用於載入 worker)
+            const ffmpegBaseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm';
             
             try {
+                // 【關鍵修正】全部使用 toBlobURL 載入，避開 SecurityError
+                statusText.innerText = "正在下載並建立虛擬環境...";
+                
                 await ffmpeg.load({
-                    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-                    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+                    coreURL: await toBlobURL(`${coreBaseURL}/ffmpeg-core.js`, 'text/javascript'),
+                    wasmURL: await toBlobURL(`${coreBaseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+                    // 下面這一行是修復 SecurityError 的關鍵！
+                    workerURL: await toBlobURL(`${ffmpegBaseURL}/worker.js`, 'text/javascript'), 
                 });
+
                 statusText.innerText = "準備就緒！";
                 loader.classList.add('hidden');
             } catch (error) {
                 console.error(error);
-                statusText.innerText = "載入失敗，請檢查瀏覽器相容性或使用 HTTPS/Localhost。";
+                statusText.innerText = "載入失敗，請檢查 Console 錯誤訊息";
                 statusText.classList.add('text-red-500');
             }
         }
@@ -131,16 +138,17 @@
                 return;
             }
 
-            // 確保 FFmpeg 已載入
             if (!ffmpeg || !ffmpeg.loaded) {
                 await loadFFmpeg();
             }
+            
+            // 如果載入失敗則停止
+            if(!ffmpeg.loaded) return;
 
             const bitrate = bitrateSelect.value;
             const inputName = 'input.mp3';
             const outputName = 'output.mp3';
 
-            // UI 更新
             compressBtn.disabled = true;
             statusArea.classList.remove('hidden');
             loader.classList.remove('hidden');
@@ -148,24 +156,16 @@
             statusText.innerText = "正在壓縮中，請稍候...";
 
             try {
-                // 1. 寫入檔案到虛擬記憶體
                 await ffmpeg.writeFile(inputName, await fetchFile(file));
-
-                // 2. 執行壓縮指令
-                // -i: 輸入, -b:a: 音訊位元率
                 await ffmpeg.exec(['-i', inputName, '-b:a', bitrate, outputName]);
-
-                // 3. 讀取輸出檔案
                 const data = await ffmpeg.readFile(outputName);
 
-                // 4. 建立下載連結
                 const blob = new Blob([data.buffer], { type: 'audio/mp3' });
                 const url = URL.createObjectURL(blob);
 
                 downloadLink.href = url;
                 downloadLink.download = `compressed_${file.name}`;
                 
-                // 顯示大小比較
                 const originalSize = (file.size / 1024 / 1024).toFixed(2);
                 const newSize = (blob.size / 1024 / 1024).toFixed(2);
                 sizeInfo.innerText = `原始大小: ${originalSize} MB -> 壓縮後: ${newSize} MB`;
@@ -181,5 +181,6 @@
             }
         });
     </script>
+   
 </body>
 </html>
