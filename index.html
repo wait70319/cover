@@ -76,8 +76,9 @@
 
     <!-- 引入 ffmpeg.wasm 的腳本 -->
     <script type="module">
-        import { FFmpeg } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/+esm';
-        import { toBlobURL, fetchFile } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/+esm';
+        // 改用 unpkg，路徑結構比較乾淨，比較不容易出錯
+        import { FFmpeg } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
+        import { toBlobURL, fetchFile } from 'https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js';
 
         const fileInput = document.getElementById('fileInput');
         const bitrateSelect = document.getElementById('bitrateSelect');
@@ -91,13 +92,12 @@
 
         let ffmpeg = null;
 
-        // 初始化 FFmpeg
         async function loadFFmpeg() {
             if (ffmpeg) return;
 
             statusArea.classList.remove('hidden');
             loader.classList.remove('hidden');
-            statusText.innerText = "正在載入核心組件 (首次需幾秒)...";
+            statusText.innerText = "正在初始化環境...";
 
             ffmpeg = new FFmpeg();
 
@@ -105,32 +105,36 @@
                 console.log(message);
             });
 
-            // 核心檔案位置
-            const coreBaseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
-            // 庫檔案位置 (用於載入 worker)
-            const ffmpegBaseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm';
-            
+            // 定義核心與 Worker 的來源 (使用 unpkg)
+            const coreBaseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+            const workerBaseURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm';
+
             try {
-                // 【關鍵修正】全部使用 toBlobURL 載入，避開 SecurityError
-                statusText.innerText = "正在下載並建立虛擬環境...";
+                statusText.innerText = "正在下載核心組件 (請稍候)...";
                 
+                // 1. 先把 Worker 的程式碼抓下來轉成 Blob (這是解決 SecurityError 的關鍵)
+                const workerBlobURL = await toBlobURL(`${workerBaseURL}/worker.js`, 'text/javascript');
+                
+                // 2. 把 Core 的程式碼抓下來
+                const coreBlobURL = await toBlobURL(`${coreBaseURL}/ffmpeg-core.js`, 'text/javascript');
+                const wasmBlobURL = await toBlobURL(`${coreBaseURL}/ffmpeg-core.wasm`, 'application/wasm');
+
+                // 3. 載入 FFmpeg，全部使用 Blob URL，騙過瀏覽器以為這些是本地檔案
                 await ffmpeg.load({
-                    coreURL: await toBlobURL(`${coreBaseURL}/ffmpeg-core.js`, 'text/javascript'),
-                    wasmURL: await toBlobURL(`${coreBaseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-                    // 下面這一行是修復 SecurityError 的關鍵！
-                    workerURL: await toBlobURL(`${ffmpegBaseURL}/worker.js`, 'text/javascript'), 
+                    coreURL: coreBlobURL,
+                    wasmURL: wasmBlobURL,
+                    workerURL: workerBlobURL  // 明確指定 Worker 來源
                 });
 
                 statusText.innerText = "準備就緒！";
                 loader.classList.add('hidden');
             } catch (error) {
                 console.error(error);
-                statusText.innerText = "載入失敗，請檢查 Console 錯誤訊息";
+                statusText.innerText = "載入失敗，請按 F12 查看 Console";
                 statusText.classList.add('text-red-500');
             }
         }
 
-        // 點擊壓縮
         compressBtn.addEventListener('click', async () => {
             const file = fileInput.files[0];
             if (!file) {
@@ -138,12 +142,13 @@
                 return;
             }
 
+            // 確保 FFmpeg 有載入
             if (!ffmpeg || !ffmpeg.loaded) {
                 await loadFFmpeg();
             }
             
-            // 如果載入失敗則停止
-            if(!ffmpeg.loaded) return;
+            // 如果還是沒載入成功，就不要繼續
+            if (!ffmpeg.loaded) return;
 
             const bitrate = bitrateSelect.value;
             const inputName = 'input.mp3';
@@ -153,7 +158,7 @@
             statusArea.classList.remove('hidden');
             loader.classList.remove('hidden');
             downloadArea.classList.add('hidden');
-            statusText.innerText = "正在壓縮中，請稍候...";
+            statusText.innerText = "正在壓縮中，這需要一點時間...";
 
             try {
                 await ffmpeg.writeFile(inputName, await fetchFile(file));
@@ -174,7 +179,7 @@
                 statusText.innerText = "完成！";
             } catch (error) {
                 console.error(error);
-                statusText.innerText = "發生錯誤，請查看 Console";
+                statusText.innerText = "處理發生錯誤，請查看 Console";
             } finally {
                 loader.classList.add('hidden');
                 compressBtn.disabled = false;
