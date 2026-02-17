@@ -59,4 +59,109 @@
 
         <div id="downloadArea" class="mt-6 hidden">
             <p class="text-center text-green-600 font-bold mb-2">壓縮完成！</p>
-            <a id="downloadLink" href="#" class="block w-
+            <a id="downloadLink" href="#" class="block w-full bg-green-500 hover:bg-green-600 text-white text-center font-bold py-2 px-4 rounded-lg">下載檔案</a>
+            <p id="sizeInfo" class="text-center text-xs text-gray-500 mt-2"></p>
+        </div>
+    </div>
+
+    <script>
+        // 從全域變數中取得 FFmpeg
+        const { FFmpeg } = FFmpegWASM;
+        const { fetchFile, toBlobURL } = FFmpegUtil;
+
+        const fileInput = document.getElementById('fileInput');
+        const bitrateSelect = document.getElementById('bitrateSelect');
+        const compressBtn = document.getElementById('compressBtn');
+        const statusArea = document.getElementById('statusArea');
+        const statusText = document.getElementById('statusText');
+        const loader = document.getElementById('loader');
+        const downloadArea = document.getElementById('downloadArea');
+        const downloadLink = document.getElementById('downloadLink');
+        const sizeInfo = document.getElementById('sizeInfo');
+
+        let ffmpeg = null;
+
+        async function loadFFmpeg() {
+            if (ffmpeg) return;
+
+            statusArea.classList.remove('hidden');
+            loader.classList.remove('hidden');
+            statusText.innerText = "正在初始化環境...";
+
+            ffmpeg = new FFmpeg();
+
+            ffmpeg.on('log', ({ message }) => {
+                console.log(message);
+            });
+
+            const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+
+            try {
+                statusText.innerText = "正在下載核心組件 (約 30MB，請稍候)...";
+                
+                // 使用 Blob URL 載入核心與 Worker
+                await ffmpeg.load({
+                    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+                    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+                });
+
+                statusText.innerText = "準備就緒！";
+                loader.classList.add('hidden');
+            } catch (error) {
+                console.error(error);
+                statusText.innerText = "載入失敗，請確認已重新整理頁面";
+                statusText.classList.add('text-red-500');
+            }
+        }
+
+        compressBtn.addEventListener('click', async () => {
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('請先選擇一個 MP3 檔案');
+                return;
+            }
+
+            if (!ffmpeg || !ffmpeg.loaded) {
+                await loadFFmpeg();
+            }
+
+            if (!ffmpeg.loaded) return;
+
+            const bitrate = bitrateSelect.value;
+            const inputName = 'input.mp3';
+            const outputName = 'output.mp3';
+
+            compressBtn.disabled = true;
+            statusArea.classList.remove('hidden');
+            loader.classList.remove('hidden');
+            downloadArea.classList.add('hidden');
+            statusText.innerText = "處理中 (轉換 + 壓縮)...";
+
+            try {
+                await ffmpeg.writeFile(inputName, await fetchFile(file));
+                await ffmpeg.exec(['-i', inputName, '-b:a', bitrate, outputName]);
+                const data = await ffmpeg.readFile(outputName);
+
+                const blob = new Blob([data.buffer], { type: 'audio/mp3' });
+                const url = URL.createObjectURL(blob);
+
+                downloadLink.href = url;
+                downloadLink.download = `compressed_${file.name}`;
+                
+                const originalSize = (file.size / 1024 / 1024).toFixed(2);
+                const newSize = (blob.size / 1024 / 1024).toFixed(2);
+                sizeInfo.innerText = `原始大小: ${originalSize} MB -> 壓縮後: ${newSize} MB`;
+
+                downloadArea.classList.remove('hidden');
+                statusText.innerText = "完成！";
+            } catch (error) {
+                console.error(error);
+                statusText.innerText = "發生錯誤，請查看 Console";
+            } finally {
+                loader.classList.add('hidden');
+                compressBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
