@@ -1,12 +1,9 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-    <!-- 1. 魔法腳本：解決 SharedArrayBuffer 問題 (一定要在第一行) -->
-    <script src="coi-serviceworker.js"></script>
-
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MP3 線上壓縮器 (最終修復版)</title>
+    <title>MP3 線上壓縮器 (經典穩定版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .loader {
@@ -23,9 +20,8 @@
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
     
-    <!-- 2. 改用 UMD 方式引入 FFmpeg (避開 SecurityError 的關鍵) -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <!-- 引入經典版 FFmpeg (v0.10.1) -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.10.1/dist/ffmpeg.min.js"></script>
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
 
@@ -65,9 +61,15 @@
     </div>
 
     <script>
-        // 從全域變數中取得 FFmpeg
-        const { FFmpeg } = FFmpegWASM;
-        const { fetchFile, toBlobURL } = FFmpegUtil;
+        // 使用經典版語法
+        const { createFFmpeg, fetchFile } = FFmpeg;
+        
+        // 建立實例
+        const ffmpeg = createFFmpeg({ 
+            log: true,
+            // 強制載入核心路徑，確保不跑偏
+            corePath: 'https://unpkg.com/@ffmpeg/core@0.10.0/dist/ffmpeg-core.js'
+        });
 
         const fileInput = document.getElementById('fileInput');
         const bitrateSelect = document.getElementById('bitrateSelect');
@@ -79,37 +81,20 @@
         const downloadLink = document.getElementById('downloadLink');
         const sizeInfo = document.getElementById('sizeInfo');
 
-        let ffmpeg = null;
-
         async function loadFFmpeg() {
-            if (ffmpeg) return;
+            if (ffmpeg.isLoaded()) return;
 
             statusArea.classList.remove('hidden');
             loader.classList.remove('hidden');
-            statusText.innerText = "正在初始化環境...";
-
-            ffmpeg = new FFmpeg();
-
-            ffmpeg.on('log', ({ message }) => {
-                console.log(message);
-            });
-
-            const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+            statusText.innerText = "正在下載引擎 (約 25MB，請稍候)...";
 
             try {
-                statusText.innerText = "正在下載核心組件 (約 30MB，請稍候)...";
-                
-                // 使用 Blob URL 載入核心與 Worker
-                await ffmpeg.load({
-                    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-                    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-                });
-
+                await ffmpeg.load();
                 statusText.innerText = "準備就緒！";
                 loader.classList.add('hidden');
             } catch (error) {
                 console.error(error);
-                statusText.innerText = "載入失敗，請確認已重新整理頁面";
+                statusText.innerText = "載入失敗，請嘗試使用電腦版 Chrome/Edge 瀏覽器。";
                 statusText.classList.add('text-red-500');
             }
         }
@@ -121,11 +106,11 @@
                 return;
             }
 
-            if (!ffmpeg || !ffmpeg.loaded) {
+            if (!ffmpeg.isLoaded()) {
                 await loadFFmpeg();
             }
 
-            if (!ffmpeg.loaded) return;
+            if (!ffmpeg.isLoaded()) return;
 
             const bitrate = bitrateSelect.value;
             const inputName = 'input.mp3';
@@ -135,12 +120,17 @@
             statusArea.classList.remove('hidden');
             loader.classList.remove('hidden');
             downloadArea.classList.add('hidden');
-            statusText.innerText = "處理中 (轉換 + 壓縮)...";
+            statusText.innerText = "正在壓縮中...";
 
             try {
-                await ffmpeg.writeFile(inputName, await fetchFile(file));
-                await ffmpeg.exec(['-i', inputName, '-b:a', bitrate, outputName]);
-                const data = await ffmpeg.readFile(outputName);
+                // 寫入檔案
+                ffmpeg.FS('writeFile', inputName, await fetchFile(file));
+
+                // 執行指令
+                await ffmpeg.run('-i', inputName, '-b:a', bitrate, outputName);
+
+                // 讀取檔案
+                const data = ffmpeg.FS('readFile', outputName);
 
                 const blob = new Blob([data.buffer], { type: 'audio/mp3' });
                 const url = URL.createObjectURL(blob);
