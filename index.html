@@ -3,36 +3,43 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MP3 線上壓縮器 (經典穩定版)</title>
+    <title>MP3 批次壓縮器 (GitHub Pages 穩定版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 FFmpeg v0.10.1 (最穩定版本) -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.10.1/dist/ffmpeg.min.js"></script>
     <style>
+        /* 旋轉動畫 */
         .loader {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #3b82f6;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3b82f6;
             border-radius: 50%;
-            width: 24px;
-            height: 24px;
+            width: 16px;
+            height: 16px;
             animation: spin 1s linear infinite;
             display: inline-block;
-            vertical-align: middle;
-            margin-right: 8px;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
-    
-    <!-- 引入經典版 FFmpeg (v0.10.1) -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.10.1/dist/ffmpeg.min.js"></script>
 </head>
-<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+<body class="bg-gray-100 min-h-screen flex flex-col items-center p-4">
 
-    <div class="bg-white rounded-xl shadow-lg p-8 w-full max-w-md">
-        <h1 class="text-2xl font-bold text-gray-800 mb-6 text-center">MP3 壓縮器</h1>
+    <div class="bg-white rounded-xl shadow-lg p-8 w-full max-w-2xl">
+        <h1 class="text-2xl font-bold text-gray-800 mb-6 text-center">MP3 批次壓縮神器</h1>
 
+        <!-- 1. 檔案上傳 (加入 multiple 屬性) -->
         <div class="mb-4">
-            <label class="block text-gray-700 text-sm font-bold mb-2">1. 選擇 MP3 檔案</label>
-            <input type="file" id="fileInput" accept="audio/mp3" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+            <label class="block text-gray-700 text-sm font-bold mb-2">1. 選擇 MP3 檔案 (可多選)</label>
+            <input type="file" id="fileInput" accept="audio/mp3" multiple class="block w-full text-sm text-gray-500
+              file:mr-4 file:py-2 file:px-4
+              file:rounded-full file:border-0
+              file:text-sm file:font-semibold
+              file:bg-blue-50 file:text-blue-700
+              hover:file:bg-blue-100
+            "/>
+            <p class="text-xs text-gray-500 mt-1 ml-2">按住 Ctrl 或 Shift 可以選擇多個檔案</p>
         </div>
 
+        <!-- 2. 選擇品質 -->
         <div class="mb-6">
             <label class="block text-gray-700 text-sm font-bold mb-2">2. 選擇目標品質</label>
             <select id="bitrateSelect" class="block w-full p-2 border border-gray-300 rounded-md">
@@ -44,113 +51,158 @@
             </select>
         </div>
 
-        <button id="compressBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg disabled:opacity-50">
-            開始壓縮
+        <!-- 按鈕 -->
+        <button id="compressBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg disabled:opacity-50 transition">
+            開始批次壓縮
         </button>
+        
+        <!-- 全局狀態 -->
+        <p id="globalStatus" class="text-center text-sm text-gray-600 mt-2 hidden"></p>
 
-        <div id="statusArea" class="mt-4 text-center text-sm text-gray-600 hidden">
-            <div id="loader" class="loader hidden"></div>
-            <span id="statusText">正在初始化...</span>
-        </div>
-
-        <div id="downloadArea" class="mt-6 hidden">
-            <p class="text-center text-green-600 font-bold mb-2">壓縮完成！</p>
-            <a id="downloadLink" href="#" class="block w-full bg-green-500 hover:bg-green-600 text-white text-center font-bold py-2 px-4 rounded-lg">下載檔案</a>
-            <p id="sizeInfo" class="text-center text-xs text-gray-500 mt-2"></p>
+        <!-- 檔案列表區域 -->
+        <div id="resultsArea" class="mt-6 space-y-3 hidden">
+            <h3 class="font-bold text-gray-700 border-b pb-2">處理清單</h3>
+            <!-- 這裡會動態插入檔案卡片 -->
+            <ul id="fileList" class="space-y-2"></ul>
         </div>
     </div>
 
     <script>
-        // 使用經典版語法
         const { createFFmpeg, fetchFile } = FFmpeg;
         
-        // 建立實例
+        // 初始化 FFmpeg 實例
         const ffmpeg = createFFmpeg({ 
-            log: true,
-            // 強制載入核心路徑，確保不跑偏
+            log: false, // 關閉大量日誌以提升效能
             corePath: 'https://unpkg.com/@ffmpeg/core@0.10.0/dist/ffmpeg-core.js'
         });
 
         const fileInput = document.getElementById('fileInput');
         const bitrateSelect = document.getElementById('bitrateSelect');
         const compressBtn = document.getElementById('compressBtn');
-        const statusArea = document.getElementById('statusArea');
-        const statusText = document.getElementById('statusText');
-        const loader = document.getElementById('loader');
-        const downloadArea = document.getElementById('downloadArea');
-        const downloadLink = document.getElementById('downloadLink');
-        const sizeInfo = document.getElementById('sizeInfo');
+        const globalStatus = document.getElementById('globalStatus');
+        const resultsArea = document.getElementById('resultsArea');
+        const fileList = document.getElementById('fileList');
 
+        // 載入 FFmpeg
         async function loadFFmpeg() {
-            if (ffmpeg.isLoaded()) return;
-
-            statusArea.classList.remove('hidden');
-            loader.classList.remove('hidden');
-            statusText.innerText = "正在下載引擎 (約 25MB，請稍候)...";
-
+            if (ffmpeg.isLoaded()) return true;
             try {
+                globalStatus.classList.remove('hidden');
+                globalStatus.innerText = "正在載入核心組件 (約 25MB，首次需稍候)...";
                 await ffmpeg.load();
-                statusText.innerText = "準備就緒！";
-                loader.classList.add('hidden');
+                return true;
             } catch (error) {
                 console.error(error);
-                statusText.innerText = "載入失敗，請嘗試使用電腦版 Chrome/Edge 瀏覽器。";
-                statusText.classList.add('text-red-500');
+                globalStatus.innerText = "載入失敗，請檢查網路或使用電腦版瀏覽器。";
+                globalStatus.classList.add('text-red-500');
+                return false;
             }
         }
 
+        // 格式化檔案大小
+        function formatSize(bytes) {
+            return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+        }
+
+        // 主邏輯
         compressBtn.addEventListener('click', async () => {
-            const file = fileInput.files[0];
-            if (!file) {
-                alert('請先選擇一個 MP3 檔案');
+            const files = fileInput.files;
+            if (files.length === 0) {
+                alert('請至少選擇一個檔案！');
                 return;
             }
 
-            if (!ffmpeg.isLoaded()) {
-                await loadFFmpeg();
-            }
+            // 1. 確保 FFmpeg 已載入
+            const isLoaded = await loadFFmpeg();
+            if (!isLoaded) return;
 
-            if (!ffmpeg.isLoaded()) return;
+            // 2. 初始化 UI
+            compressBtn.disabled = true;
+            resultsArea.classList.remove('hidden');
+            fileList.innerHTML = ''; // 清空列表
+            globalStatus.innerText = `準備處理 ${files.length} 個檔案...`;
 
             const bitrate = bitrateSelect.value;
-            const inputName = 'input.mp3';
-            const outputName = 'output.mp3';
 
-            compressBtn.disabled = true;
-            statusArea.classList.remove('hidden');
-            loader.classList.remove('hidden');
-            downloadArea.classList.add('hidden');
-            statusText.innerText = "正在壓縮中...";
+            // 3. 建立檔案列表 UI
+            const fileItems = [];
+            Array.from(files).forEach((file, index) => {
+                const li = document.createElement('li');
+                li.className = "bg-gray-50 p-3 rounded flex items-center justify-between border border-gray-200";
+                li.innerHTML = `
+                    <div class="flex items-center min-w-0 flex-1">
+                        <div id="icon-${index}" class="text-gray-400 mr-3">Wait</div>
+                        <div class="truncate">
+                            <p class="text-sm font-medium text-gray-800 truncate" title="${file.name}">${file.name}</p>
+                            <p class="text-xs text-gray-500">${formatSize(file.size)}</p>
+                        </div>
+                    </div>
+                    <div id="action-${index}" class="ml-4 text-sm text-gray-500">等待中...</div>
+                `;
+                fileList.appendChild(li);
+                fileItems.push({ file, index, li });
+            });
 
-            try {
-                // 寫入檔案
-                ffmpeg.FS('writeFile', inputName, await fetchFile(file));
+            // 4. 逐一處理檔案 (序列處理，避免記憶體爆炸)
+            for (let i = 0; i < fileItems.length; i++) {
+                const { file, index } = fileItems[i];
+                const actionDiv = document.getElementById(`action-${index}`);
+                const iconDiv = document.getElementById(`icon-${index}`);
 
-                // 執行指令
-                await ffmpeg.run('-i', inputName, '-b:a', bitrate, outputName);
+                // 更新狀態：處理中
+                globalStatus.innerText = `正在處理 (${i + 1}/${files.length}): ${file.name}`;
+                iconDiv.innerHTML = `<div class="loader"></div>`;
+                actionDiv.innerText = "壓縮中...";
+                actionDiv.className = "ml-4 text-sm text-blue-600 font-bold";
 
-                // 讀取檔案
-                const data = ffmpeg.FS('readFile', outputName);
+                try {
+                    // 為了避免檔名衝突，統一使用 temp_input.mp3
+                    const inputName = 'temp_input.mp3';
+                    const outputName = 'temp_output.mp3';
 
-                const blob = new Blob([data.buffer], { type: 'audio/mp3' });
-                const url = URL.createObjectURL(blob);
+                    // 寫入虛擬檔案系統
+                    ffmpeg.FS('writeFile', inputName, await fetchFile(file));
 
-                downloadLink.href = url;
-                downloadLink.download = `compressed_${file.name}`;
-                
-                const originalSize = (file.size / 1024 / 1024).toFixed(2);
-                const newSize = (blob.size / 1024 / 1024).toFixed(2);
-                sizeInfo.innerText = `原始大小: ${originalSize} MB -> 壓縮後: ${newSize} MB`;
+                    // 執行壓縮
+                    await ffmpeg.run('-i', inputName, '-b:a', bitrate, outputName);
 
-                downloadArea.classList.remove('hidden');
-                statusText.innerText = "完成！";
-            } catch (error) {
-                console.error(error);
-                statusText.innerText = "發生錯誤，請查看 Console";
-            } finally {
-                loader.classList.add('hidden');
-                compressBtn.disabled = false;
+                    // 讀取結果
+                    const data = ffmpeg.FS('readFile', outputName);
+                    
+                    // 建立下載連結
+                    const blob = new Blob([data.buffer], { type: 'audio/mp3' });
+                    const url = URL.createObjectURL(blob);
+                    const newSize = formatSize(blob.size);
+
+                    // 清理虛擬記憶體 (重要！否則處理多個檔案會記憶體不足)
+                    ffmpeg.FS('unlink', inputName);
+                    ffmpeg.FS('unlink', outputName);
+
+                    // 更新 UI：完成
+                    iconDiv.innerHTML = `<span class="text-green-500">✔</span>`;
+                    actionDiv.innerHTML = `
+                        <div class="flex flex-col items-end">
+                            <span class="text-xs text-gray-500 mb-1">-> ${newSize}</span>
+                            <a href="${url}" download="compressed_${file.name}" class="bg-green-500 hover:bg-green-600 text-white text-xs py-1 px-3 rounded transition">
+                                下載
+                            </a>
+                        </div>
+                    `;
+
+                } catch (err) {
+                    console.error(err);
+                    iconDiv.innerHTML = `<span class="text-red-500">✘</span>`;
+                    actionDiv.innerText = "失敗";
+                    actionDiv.className = "ml-4 text-sm text-red-500";
+                    
+                    // 嘗試清理，以防萬一
+                    try { ffmpeg.FS('unlink', 'temp_input.mp3'); } catch(e){}
+                    try { ffmpeg.FS('unlink', 'temp_output.mp3'); } catch(e){}
+                }
             }
+
+            globalStatus.innerText = "全部任務完成！";
+            compressBtn.disabled = false;
         });
     </script>
 </body>
